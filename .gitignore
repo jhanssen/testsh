@@ -2,4 +2,7 @@ CMakeCache.txt
 CMakeFiles
 *.ninja
 *.cmake
+.ninja*
 testsh
+build
+node_modules

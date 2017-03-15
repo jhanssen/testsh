@@ -10,7 +10,9 @@
 #include <memory>
 #include <functional>
 #include <string>
+#include <vector>
 #include <initializer_list>
+#include <nan.h>
 
 #define EINTRWRAP(var, op)                      \
     do {                                        \
@@ -46,7 +48,32 @@ void run(const std::string& cmd, std::initializer_list<const std::string> list)
             ++ch;
         }
 
-        execve(cmd.c_str(), args, environ);
+        // reopen std* for some reason
+        int dupped, e;
+
+        EINTRWRAP(dupped, dup(STDIN_FILENO));
+        EINTRWRAP(e, dup2(dupped, STDIN_FILENO));
+        EINTRWRAP(e, ::close(dupped));
+
+        EINTRWRAP(dupped, dup(STDOUT_FILENO));
+        EINTRWRAP(e, dup2(dupped, STDOUT_FILENO));
+        EINTRWRAP(e, ::close(dupped));
+
+        EINTRWRAP(dupped, dup(STDERR_FILENO));
+        EINTRWRAP(e, dup2(dupped, STDERR_FILENO));
+        EINTRWRAP(e, ::close(dupped));
+
+        std::vector<char*> env;
+        auto ev = environ;
+        while (*ev) {
+            env.push_back(strdup(*ev));
+            ++ev;
+        }
+        env.push_back(strdup("LINES=41"));
+        env.push_back(strdup("COLUMNS=20"));
+        env.push_back(0);
+
+        execve(cmd.c_str(), args, &env[0]);
         printf("boo %d\n", errno);
         exit(0);
     } else if (p > 0) {
@@ -67,8 +94,7 @@ void run(const std::string& cmd, std::initializer_list<const std::string> list)
     }
 }
 
-int readFromStdin()
-{
+NAN_METHOD(readFromStdin) {
     // setup
     state.pid = getpid();
 
@@ -80,7 +106,7 @@ int readFromStdin()
     if (state.pgid != state.pid) {
         // more badness
         fprintf(stderr, "unable to set group leader\n");
-        return 2;
+        return;
     }
 
     signal(SIGTSTP, SIG_IGN);
@@ -89,11 +115,11 @@ int readFromStdin()
 
     if (tcsetpgrp(STDIN_FILENO, state.pgid) == -1) {
         fprintf(stderr, "unable to set process group for terminal\n");
-        return 2;
+        return;
     }
     if (tcgetattr(STDIN_FILENO, &state.tmodes) == -1) {
         fprintf(stderr, "unable to get terminal attributes for terminal\n");
-        return 2;
+        return;
     }
 
     char buf[100];
@@ -101,21 +127,25 @@ int readFromStdin()
     for (;;) {
         EINTRWRAP(e, ::read(STDIN_FILENO, buf, sizeof(buf)));
         if (e == -1)
-            return 1;
+            return;
         for (int i = 0; i < e; ++i) {
             switch (buf[i]) {
             case 'q':
-                return 0;
+                return;
             case 'g':
                 // run git
                 run("/Users/jhanssen/bin/git", { "log" });
                 break;
+            case 'l':
+                // run ls
+                run("/bin/ls", {} );
             }
         }
     }
 }
 
-int main(int, char**)
-{
-    return readFromStdin();
+NAN_MODULE_INIT(Initialize) {
+    NAN_EXPORT(target, readFromStdin);
 }
+
+NODE_MODULE(testsh, Initialize)
